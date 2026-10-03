@@ -3,6 +3,7 @@ name: Supervisor orchestration tests
 on:
   push:
     branches:
+      - main
       - feat/claude-style-tools
   pull_request:
     paths:
