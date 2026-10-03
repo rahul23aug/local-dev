@@ -30,6 +30,11 @@ def main():
     resume.add_argument('--trusted-code', action='store_true', required=True)
     status = sub.add_parser('status')
     status.add_argument('run_id')
+    sub.add_parser('tools', help='List compatible tool contracts and local availability')
+    answer = sub.add_parser('answer', help='Answer a paused run question, then use resume')
+    answer.add_argument('run_id')
+    answer.add_argument('question_id')
+    answer.add_argument('answer')
     args = parser.parse_args()
     args.state_dir.mkdir(parents=True, exist_ok=True)
     with (args.state_dir / 'controller.lock').open('a') as lock:
@@ -37,22 +42,42 @@ def main():
         except BlockingIOError: parser.exit(2, 'Another local-coder command is active.\n')
         store = Store(args.state_dir / 'agent.db')
         try:
+            if args.command == 'tools':
+                from .tools import Tools
+                import tempfile
+                with tempfile.TemporaryDirectory(dir=args.state_dir) as temporary:
+                    tools = Tools(Path(temporary), ['true'], {})
+                    try: print(json.dumps(tools.catalogue(), indent=2))
+                    finally: tools.close()
+                return 0
+            if args.command == 'answer':
+                engine = Engine(store, ScriptedBackend([]))
+                tools = engine.tools(args.run_id)
+                try:
+                    tools.state.answer_question(args.question_id, args.answer)
+                    store.event(args.run_id, 'USER_ANSWER', {'question_id': args.question_id,
+                                                           'answer': args.answer})
+                finally: tools.close()
+                print('Answer saved. Use resume to continue.')
+                return 0
             if args.command == 'status':
                 print(json.dumps(report(store, args.run_id), indent=2))
                 return 0
             if args.command == 'demo':
                 actions = json.loads((ROOT / 'benchmarks' / 'smoke-actions.json').read_text())
-                engine = Engine(store, ScriptedBackend(actions), max_steps=10)
+                engine = Engine(store, ScriptedBackend(actions), max_steps=10,
+                                notify=lambda text: print('MESSAGE ' + json.dumps(text), flush=True))
                 run_id = engine.create(ROOT / 'benchmarks' / 'addition',
                                        'Fix addition. Preserve subtraction and public API; do not edit tests.',
                                        ['python3', '-m', 'unittest', 'discover', '-v'], args.state_dir / 'runs')
             else:
-                engine = Engine(store, ColabBackend(), max_steps=args.max_steps)
+                engine = Engine(store, ColabBackend(), max_steps=args.max_steps,
+                                notify=lambda text: print('MESSAGE ' + json.dumps(text), flush=True))
                 if args.command == 'resume': run_id = args.run_id
                 else:
                     task = json.loads(args.task.read_text())
                     run_id = engine.create(Path(task['repo']), task['objective'], task['verify'],
-                                           args.state_dir / 'runs', task.get('protected', []))
+                                           args.state_dir / 'runs', task.get('protected', []), task.get('tools'))
             print('Run ID: ' + run_id, flush=True)
             print('Workspace: ' + store.get(run_id)['workspace'], flush=True)
             result = engine.run(run_id)

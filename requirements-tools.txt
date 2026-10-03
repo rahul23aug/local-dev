@@ -1,0 +1,2 @@
+# Optional Python LSP backend. The harness itself uses the standard library.
+python-lsp-server==1.15.0

@@ -16,13 +16,21 @@ class Store:
                 state TEXT, steps INTEGER DEFAULT 0, created REAL);
             CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY, run_id TEXT, kind TEXT, data TEXT, created REAL);
+            CREATE TABLE IF NOT EXISTS delegations (
+                parent TEXT, task_id TEXT, child TEXT, max_steps INTEGER,
+                status TEXT, links TEXT, PRIMARY KEY(parent, task_id));
         ''')
+        columns = {r[1] for r in self.db.execute('PRAGMA table_info(runs)')}
+        if 'tool_config' not in columns:
+            self.db.execute("ALTER TABLE runs ADD COLUMN tool_config TEXT DEFAULT '{}'")
+        self.db.commit()
 
     def create(self, record):
-        self.db.execute('INSERT INTO runs (id,workspace,objective,verify_command,protected,baseline,state,created) '
-                        'VALUES (?,?,?,?,?,?,?,?)',
+        self.db.execute('INSERT INTO runs (id,workspace,objective,verify_command,protected,baseline,state,created,tool_config) '
+                        'VALUES (?,?,?,?,?,?,?,?,?)',
                         tuple(record[k] for k in ('id', 'workspace', 'objective', 'verify_command',
-                                                  'protected', 'baseline', 'state')) + (time.time(),))
+                                                  'protected', 'baseline', 'state')) +
+                        (time.time(), record.get('tool_config', '{}')))
         self.db.commit()
 
     def get(self, run):
@@ -49,5 +57,22 @@ class Store:
             rows = reversed(self.db.execute('SELECT * FROM events WHERE run_id=? ORDER BY id DESC LIMIT ?',
                                            (run, limit)).fetchall())
         return [dict(row, data=json.loads(row['data'])) for row in rows]
+
+    def delegation(self, parent, task_id, child, max_steps):
+        """Controller-only continuation authority, outside model task metadata."""
+        self.db.execute('INSERT INTO delegations VALUES(?,?,?,?,?,?)',
+                        (parent, task_id, child, max_steps, 'running', '[]'))
+        self.db.commit()
+
+    def delegation_state(self, parent, task_id, status, links=()):
+        if status not in {'running', 'paused', 'complete', 'failed', 'stopped'}:
+            raise ValueError('Invalid delegation state')
+        self.db.execute('UPDATE delegations SET status=?,links=? WHERE parent=? AND task_id=?',
+                        (status, json.dumps(links), parent, task_id))
+        self.db.commit()
+
+    def delegations(self, parent):
+        return [dict(r, links=json.loads(r['links'])) for r in
+                self.db.execute('SELECT * FROM delegations WHERE parent=?', (parent,))]
 
     def close(self): self.db.close()

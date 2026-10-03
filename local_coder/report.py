@@ -1,4 +1,7 @@
 """Evidence-derived metrics. Unknown measures stay unknown, not fabricated."""
+import json
+from pathlib import Path
+import sqlite3
 
 
 def report(store, run):
@@ -8,11 +11,20 @@ def report(store, run):
     requests = [e for e in events if e['kind'] == 'MODEL_REQUEST']
     audits = [e for e in events if e['kind'] == 'AUDIT']
     verifications = [e for e in events if e['kind'] == 'VERIFY']
-    finish = [e for e in events if e['kind'] == 'DECISION' and e['data']['tool'] == 'finish']
+    finish = [e for e in events if e['kind'] == 'DECISION' and e['data']['tool'].lower() == 'finish']
     totals = {}
     for event in models:
         for key, value in event['data'].get('usage', {}).items():
             if isinstance(value, (int, float)): totals[key] = totals.get(key, 0) + value
+    questions = []
+    path = Path(row['workspace']).parent / 'tools.sqlite3'
+    if path.is_file():
+        # Status is read-only; it must not execute/recover scheduled jobs.
+        with sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) as db:
+            for data, in db.execute('SELECT data FROM tool_records WHERE namespace=? AND kind=?',
+                                   (run, 'question')):
+                question = json.loads(data)
+                if question['status'] == 'pending': questions.append(question)
     return {'run_id': run, 'state': row['state'], 'workspace': row['workspace'],
             'verified_complete': row['state'] == 'COMPLETE',
             'verification_scope': 'owner command + acceptance hashes + nonempty change; no hidden oracle',
@@ -22,6 +34,8 @@ def report(store, run):
             'infrastructure_failures': sum(e['kind'] == 'INFRA_ERROR' for e in events),
             'action_errors': sum(e['kind'] == 'ACTION_ERROR' for e in events),
             'tool_calls': sum(e['kind'] == 'TOOL' for e in events),
+            'delegated_runs': [e['data']['run_id'] for e in events if e['kind'] == 'DELEGATED'],
+            'pending_questions': questions,
             'verification_runs': len(verifications),
             'false_completion_requests': len(finish) - int(row['state'] == 'COMPLETE'),
             'tokens': totals or None,
