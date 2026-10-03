@@ -25,6 +25,7 @@ def report(store, run):
                                    (run, 'question')):
                 question = json.loads(data)
                 if question['status'] == 'pending': questions.append(question)
+    supervisor_nodes = store.supervisor_nodes(run)
     return {'run_id': run, 'state': row['state'], 'workspace': row['workspace'],
             'verified_complete': row['state'] == 'COMPLETE',
             'verification_scope': 'owner command + acceptance hashes + nonempty change; no hidden oracle',
@@ -35,9 +36,18 @@ def report(store, run):
             'action_errors': sum(e['kind'] == 'ACTION_ERROR' for e in events),
             'tool_calls': sum(e['kind'] == 'TOOL' for e in events),
             'delegated_runs': [e['data']['run_id'] for e in events if e['kind'] == 'DELEGATED'],
+            'supervisor': ({'enabled': True,
+                            'nodes': [{'id': n['id'], 'title': n['title'], 'status': n['status'],
+                                       'attempts': n['attempts']} for n in supervisor_nodes],
+                            'reviews': sum(e['kind'] == 'SUPERVISOR_REVIEW' for e in events),
+                            'final_reviews': sum(e['kind'] == 'SUPERVISOR_FINAL' for e in events),
+                            'recoveries': sum(e['kind'] == 'SUPERVISOR_RECOVERY' for e in events)}
+                           if supervisor_nodes else {'enabled': False}),
+            'worker_finish_requests': len(finish),
             'pending_questions': questions,
             'verification_runs': len(verifications),
-            'false_completion_requests': len(finish) - int(row['state'] == 'COMPLETE'),
+            'false_completion_requests': (0 if supervisor_nodes else
+                                          len(finish) - int(row['state'] == 'COMPLETE')),
             'tokens': totals or None,
             'wall_seconds': round(events[-1]['created'] - row['created'], 3) if events else 0,
             'changed_files': audits[-1]['data']['changed_files'] if audits else [],
