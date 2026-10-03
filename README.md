@@ -63,6 +63,34 @@ and a nonempty file change. This is deliberately limited evidence: it does not
 prove every requirement, hidden test, or regression is satisfied. A no-change
 task cannot complete in this repair-focused MVP.
 
+## Optional large-model supervisor
+
+A separate large model can now own planning/review while Colab remains the coding
+worker. The supervisor never receives repository tool authority and cannot mark
+the run complete. It creates a controller-owned dependency DAG, reviews bounded
+worker diffs, can revise/replan after failures, and performs a final model review
+before the existing owner verifier/audit remains authoritative.
+
+Configure an owner-authored JSON task with a supervisor command:
+
+```json
+{
+  "repo": "/absolute/repo",
+  "objective": "Implement the requested change",
+  "verify": ["python3", "-m", "pytest", "-q"],
+  "supervisor": {
+    "command": ["/absolute/path/to/large-model-wrapper"],
+    "timeout": 180
+  }
+}
+```
+
+The wrapper receives one JSON object on stdin with operation `plan`, `review`,
+`final_review` or `recover`, and returns exactly one JSON object on stdout.
+It can call Claude, Gemini, OpenAI or another larger model. Supervisor commands
+are owner configuration and execute as the owner, not in the worker sandbox.
+See [supervisor protocol](docs/SUPERVISOR.md).
+
 ## Persistence and recovery
 
 SQLite `.state/agent.db` stores runs, decisions, raw observations, usage and
@@ -114,7 +142,6 @@ python3 -m unittest discover -s tests -v
 ```
 
 See [VALIDATION.md](VALIDATION.md) and [implementation plan](docs/implementation-plan.md).
-Future increments: GitNexus, Context Mode, independent hidden
-oracle, supervisor/worker split, benchmark datasets and ablations. These are
-not claimed as implemented. The CLI creates no daemon or boot service and does
+Future increments: GitNexus, Context Mode, independent hidden oracle,
+benchmark datasets and ablations. These are not claimed as implemented. The CLI creates no daemon or boot service and does
 not push commits automatically.
