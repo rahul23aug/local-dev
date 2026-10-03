@@ -9,8 +9,17 @@ from .backend import ColabBackend, ScriptedBackend
 from .engine import Engine
 from .report import report
 from .store import Store
+from .supervisor import CommandSupervisorBackend, Supervisor
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def build_supervisor(store, config):
+    if not config:
+        return None
+    if not isinstance(config, dict) or set(config) - {'command', 'timeout'}:
+        raise ValueError('Supervisor config supports only command and timeout')
+    return Supervisor(store, CommandSupervisorBackend(config.get('command'), config.get('timeout', 180)))
 
 
 def main():
@@ -71,13 +80,21 @@ def main():
                                        'Fix addition. Preserve subtraction and public API; do not edit tests.',
                                        ['python3', '-m', 'unittest', 'discover', '-v'], args.state_dir / 'runs')
             else:
-                engine = Engine(store, ColabBackend(), max_steps=args.max_steps,
-                                notify=lambda text: print('MESSAGE ' + json.dumps(text), flush=True))
-                if args.command == 'resume': run_id = args.run_id
+                if args.command == 'resume':
+                    run_id = args.run_id
+                    supervisor_config = json.loads(store.get(run_id).get('supervisor_config') or '{}')
+                    task = None
                 else:
                     task = json.loads(args.task.read_text())
+                    supervisor_config = task.get('supervisor') or {}
+                supervisor = build_supervisor(store, supervisor_config)
+                engine = Engine(store, ColabBackend(), max_steps=args.max_steps,
+                                notify=lambda text: print('MESSAGE ' + json.dumps(text), flush=True),
+                                supervisor=supervisor)
+                if task is not None:
                     run_id = engine.create(Path(task['repo']), task['objective'], task['verify'],
-                                           args.state_dir / 'runs', task.get('protected', []), task.get('tools'))
+                                           args.state_dir / 'runs', task.get('protected', []), task.get('tools'),
+                                           supervisor_config=supervisor_config)
             print('Run ID: ' + run_id, flush=True)
             print('Workspace: ' + store.get(run_id)['workspace'], flush=True)
             result = engine.run(run_id)
