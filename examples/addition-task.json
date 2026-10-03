@@ -1,0 +1,6 @@
+{
+  "repo": "/home/rahul/local-coder/benchmarks/addition",
+  "objective": "Fix addition for positive, negative and zero values. Preserve subtraction and the public API. Do not edit existing acceptance tests.",
+  "verify": ["python3", "-m", "unittest", "discover", "-v"],
+  "protected": ["test_calc.py"]
+}

@@ -1,0 +1,94 @@
+# Local Coder
+
+GitHub repository: `local-dev`; project and local CLI: **Local Coder**.
+
+An experimental coding harness: the Raspberry Pi owns workspaces, execution,
+evidence, checkpoints and completion. Colab supplies inference through the
+existing `colab-agent` transport. No existing project is modified by setup.
+
+## Run
+
+```bash
+cd /home/rahul/local-coder
+./local-coder demo
+```
+
+This scripted smoke test intentionally requests completion too early, receives
+failing tests, edits the copied fixture and completes only after tests pass.
+It tests the harness, **not Qwen's coding ability**.
+
+For a real model run, first start your existing Colab inference environment:
+
+```bash
+cd /home/rahul/colab-agent
+./colab-agent setup
+cd /home/rahul/local-coder
+./local-coder run examples/addition-task.json --trusted-code --max-steps 20
+./local-coder status RUN_ID
+./local-coder resume RUN_ID --trusted-code --max-steps 40
+```
+
+Do not run setup if inference is already ready. No GPU is requested or runtime
+automatically recreated by Local Coder. Model/context/hardware configuration
+remains owned by `colab-agent/environment.json` (currently Qwen3.5 **9B**, CPU,
+8K context). The adapter asks for up to 1,024 reply tokens; the existing remote
+tokenizer enforces the prompt/context limit. Replies are non-streaming.
+
+## Owner-authored tasks
+
+Use JSON with an absolute `repo`, a concise `objective`, a verification command
+as an argv array, and optional `protected` relative paths. Source files are
+copied into `.state/runs/RUN_ID/workspace`; changes are not applied back or
+committed automatically. Verify the resulting diff yourself before adopting it.
+
+Tools: list files, literal search, bounded line reads, exact single replacement,
+write a file, run the fixed owner verifier, request completion. No arbitrary
+model shell tool. Existing test files are protected automatically; protect
+other acceptance/configuration files explicitly. Added tests are permitted.
+
+Completion requires a successful fresh owner verifier, intact acceptance files
+and a nonempty file change. This is deliberately limited evidence: it does not
+prove every requirement, hidden test, or regression is satisfied. A no-change
+task cannot complete in this repair-focused MVP.
+
+## Persistence and recovery
+
+SQLite `.state/agent.db` stores runs, decisions, raw observations, usage and
+checkpoints. Context contains the task plus a bounded tail of evidence with
+event IDs, not the whole history. Infra failures become `INFRA_BLOCKED`, not
+coding failures. Increase the total step budget to resume exhausted runs.
+
+An uncertain in-flight generation/action/verification becomes `INTERRUPTED`
+on restart and is **not** automatically replayed. Inspect it and start a fresh
+run; this avoids repeating potentially applied changes. Completed runs are
+immutable through the run loop. One controller runs at a time. Colab inference
+also takes the existing colab-agent lock to avoid setup/chat overlap.
+
+## Security and limits
+
+**Trusted repositories and test commands only. This is not an OS sandbox.**
+Tests run with your account permissions; malicious tests can access host files,
+network or secrets. Path restrictions protect the file-tool boundary, not code
+execution. No genuinely hidden oracle exists yet. Do not use production
+repositories or untrusted submissions until process/container isolation exists.
+
+Copies exclude Git internals, virtual environments, node_modules, bytecode and
+`.env`; other secret files may still be copied. Repositories with symlinks are
+rejected. Maximum copy: 5,000 files/50 MiB; file tool: 256 KiB; verification:
+120 seconds and 1 MiB of output; model loop defaults to 30 actions. Dependencies must already exist.
+Full verifier output up to that limit is retained in each run's `evidence/`
+directory; only a tail enters model context. Children of timed-out tests are stopped.
+Prompts and source snippets go to Colab. SQLite and Colab CLI logs/receipts can
+contain source and prompts; files created by the CLI use a private umask.
+
+## Verification
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+See [VALIDATION.md](VALIDATION.md) and [implementation plan](docs/implementation-plan.md).
+Future increments: dependency DAG, GitNexus, Context Mode, independent hidden
+oracle, supervisor/worker split, benchmark datasets and ablations. These are
+not claimed as implemented. The CLI creates no daemon or boot service and does
+not push commits automatically.

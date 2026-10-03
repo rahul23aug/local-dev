@@ -1,0 +1,7 @@
+[
+  {"tool": "list", "args": {}},
+  {"tool": "read", "args": {"path": "calc.py"}},
+  {"tool": "finish", "args": {}},
+  {"tool": "replace", "args": {"path": "calc.py", "old": "def add(a, b):\n    return a - b", "new": "def add(a, b):\n    return a + b"}},
+  {"tool": "finish", "args": {}}
+]

@@ -1,0 +1,8 @@
+#!/bin/sh
+# Colab adapter needs the existing CLI environment. No packages are installed.
+set -eu
+PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+CODER_PYTHON=/home/rahul/.local/share/uv/tools/google-colab-cli/bin/python
+if [ ! -x "$CODER_PYTHON" ]; then CODER_PYTHON=python3; fi
+export PYTHONPATH="$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+exec "$CODER_PYTHON" -m local_coder.cli "$@"
