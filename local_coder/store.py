@@ -19,18 +19,23 @@ class Store:
             CREATE TABLE IF NOT EXISTS delegations (
                 parent TEXT, task_id TEXT, child TEXT, max_steps INTEGER,
                 status TEXT, links TEXT, PRIMARY KEY(parent, task_id));
+            CREATE TABLE IF NOT EXISTS supervisor_nodes (
+                run_id TEXT, node_id TEXT, position INTEGER, data TEXT,
+                PRIMARY KEY(run_id, node_id));
         ''')
         columns = {r[1] for r in self.db.execute('PRAGMA table_info(runs)')}
         if 'tool_config' not in columns:
             self.db.execute("ALTER TABLE runs ADD COLUMN tool_config TEXT DEFAULT '{}'")
+        if 'supervisor_config' not in columns:
+            self.db.execute("ALTER TABLE runs ADD COLUMN supervisor_config TEXT DEFAULT '{}'")
         self.db.commit()
 
     def create(self, record):
-        self.db.execute('INSERT INTO runs (id,workspace,objective,verify_command,protected,baseline,state,created,tool_config) '
-                        'VALUES (?,?,?,?,?,?,?,?,?)',
+        self.db.execute('INSERT INTO runs (id,workspace,objective,verify_command,protected,baseline,state,created,tool_config,supervisor_config) '
+                        'VALUES (?,?,?,?,?,?,?,?,?,?)',
                         tuple(record[k] for k in ('id', 'workspace', 'objective', 'verify_command',
                                                   'protected', 'baseline', 'state')) +
-                        (time.time(), record.get('tool_config', '{}')))
+                        (time.time(), record.get('tool_config', '{}'), record.get('supervisor_config', '{}')))
         self.db.commit()
 
     def get(self, run):
@@ -74,5 +79,33 @@ class Store:
     def delegations(self, parent):
         return [dict(r, links=json.loads(r['links'])) for r in
                 self.db.execute('SELECT * FROM delegations WHERE parent=?', (parent,))]
+
+    def supervisor_replace(self, run, nodes):
+        with self.db:
+            self.db.execute('DELETE FROM supervisor_nodes WHERE run_id=?', (run,))
+            for position, node in enumerate(nodes):
+                record = dict(node, position=position)
+                self.db.execute('INSERT INTO supervisor_nodes(run_id,node_id,position,data) VALUES(?,?,?,?)',
+                                (run, node['id'], position, json.dumps(record, allow_nan=False)))
+
+    def supervisor_nodes(self, run):
+        return [json.loads(row['data']) for row in
+                self.db.execute('SELECT data FROM supervisor_nodes WHERE run_id=? ORDER BY position', (run,))]
+
+    def supervisor_node(self, run, node_id):
+        row = self.db.execute('SELECT data FROM supervisor_nodes WHERE run_id=? AND node_id=?',
+                              (run, node_id)).fetchone()
+        if row is None: raise ValueError('Unknown supervisor node')
+        return json.loads(row['data'])
+
+    def supervisor_update(self, run, node_id, **fields):
+        allowed = {'status', 'attempts', 'last_review'}
+        if not fields or not set(fields) <= allowed:
+            raise ValueError('Invalid supervisor node fields')
+        with self.db:
+            node = self.supervisor_node(run, node_id)
+            node.update(fields)
+            self.db.execute('UPDATE supervisor_nodes SET data=? WHERE run_id=? AND node_id=?',
+                            (json.dumps(node, allow_nan=False), run, node_id))
 
     def close(self): self.db.close()
