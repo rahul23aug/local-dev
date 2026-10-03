@@ -14,9 +14,12 @@ class RecordingBackend(ScriptedBackend):
     def __init__(self, actions):
         super().__init__(actions)
         self.messages = []
+        self.before_generate = None
 
     def generate(self, messages):
         self.messages.append(messages)
+        if self.before_generate is not None:
+            self.before_generate(len(self.messages))
         return super().generate(messages)
 
 
@@ -44,10 +47,7 @@ class SupervisorTests(unittest.TestCase):
 
     def test_two_node_plan_drives_worker_and_final_audit(self):
         engine, worker, run = self.supervised([
-            {'tool': 'Read', 'args': {'file_path': 'calc.py'}},
             {'tool': 'Finish', 'args': {}},
-            {'tool': 'Edit', 'args': {'file_path': 'calc.py',
-                                      'old_string': 'a - b', 'new_string': 'a + b'}},
             {'tool': 'Finish', 'args': {}},
         ], [
             {'nodes': [
@@ -63,6 +63,10 @@ class SupervisorTests(unittest.TestCase):
             {'decision': 'accept', 'guidance': 'Patch is minimal.'},
             {'decision': 'accept', 'guidance': 'Requirements are covered.'},
         ])
+        workspace = Path(self.store.get(run)['workspace'])
+        worker.before_generate = lambda call: (
+            (workspace / 'calc.py').write_text('def add(a, b):\n    return a + b\n')
+            if call == 2 else None)
         result = engine.run(run)
         self.assertEqual(result['state'], 'COMPLETE')
         self.assertEqual([n['status'] for n in self.store.supervisor_nodes(run)],
@@ -75,8 +79,6 @@ class SupervisorTests(unittest.TestCase):
     def test_revision_guidance_returns_to_same_worker_node(self):
         engine, worker, run = self.supervised([
             {'tool': 'Finish', 'args': {}},
-            {'tool': 'Edit', 'args': {'file_path': 'calc.py',
-                                      'old_string': 'a - b', 'new_string': 'a + b'}},
             {'tool': 'Finish', 'args': {}},
         ], [
             {'nodes': [{'id': 'fix', 'title': 'Fix', 'objective': 'Correct addition.',
@@ -85,6 +87,10 @@ class SupervisorTests(unittest.TestCase):
             {'decision': 'accept', 'guidance': 'Corrected.'},
             {'decision': 'accept', 'guidance': 'Ready.'},
         ])
+        workspace = Path(self.store.get(run)['workspace'])
+        worker.before_generate = lambda call: (
+            (workspace / 'calc.py').write_text('def add(a, b):\n    return a + b\n')
+            if call == 2 else None)
         self.assertEqual(engine.run(run)['state'], 'COMPLETE')
         serialized = '\n'.join(message['content'] for call in worker.messages for message in call)
         self.assertIn('No code change yet', serialized)
